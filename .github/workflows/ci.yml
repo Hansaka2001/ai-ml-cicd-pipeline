@@ -1,17 +1,26 @@
 # =============================================================================
 # ci.yml
-# GitHub Actions — Continuous Integration Pipeline
+# GitHub Actions — Production-Grade Multi-Stage CI Pipeline
 #
-# Runs on every push and pull request to the `main` branch.
+# Trigger: push or pull request to `main`.
 #
-# Pipeline steps:
-#   1. Checkout source code
-#   2. Set up Python 3.12
-#   3. Cache pip dependencies (speeds up subsequent runs)
-#   4. Install all dependencies from requirements.txt
-#   5. Black  — check code formatting
-#   6. Ruff   — lint for errors and style violations
-#   7. pytest — run the full unit test suite
+# Job graph:
+#
+#   ┌─────────┐     ┌──────┐
+#   │  lint   │     │ test │
+#   │ (Black) │     │      │
+#   │ (Ruff)  │     │pytest│
+#   └────┬────┘     └──┬───┘
+#        │             │
+#        └──── both must pass for PR merge ────┘
+#
+# Jobs run in PARALLEL by default.
+# The `test` job has `needs: lint` so tests only run when lint passes —
+# avoids wasting runner minutes on test runs with known formatting errors.
+#
+# Future extension points (CD phases):
+#   - Add a `docker-build` job after `test` to build and push an image.
+#   - Add a `deploy-staging` job after `docker-build`.
 # =============================================================================
 
 name: CI
@@ -24,76 +33,166 @@ on:
     branches:
       - main
 
+# ---------------------------------------------------------------------------
+# Shared defaults applied to every job step that runs a shell command.
+# ---------------------------------------------------------------------------
+defaults:
+  run:
+    shell: bash
+
+# ---------------------------------------------------------------------------
+# Environment variables available to all jobs.
+# Centralised here so they are easy to update in future phases.
+# ---------------------------------------------------------------------------
+env:
+  PYTHON_VERSION: "3.12"
+
 jobs:
-  # ---------------------------------------------------------------------------
-  # quality-and-tests
-  # A single job that runs all checks sequentially.
-  # Each step must pass before the next one starts.
-  # ---------------------------------------------------------------------------
-  quality-and-tests:
-    name: Code Quality & Tests
+  # ===========================================================================
+  # JOB 1 — lint
+  # Checks code formatting (Black) and linting rules (Ruff).
+  # Fast job: no ML dependencies needed, so only quality tools are installed.
+  # ===========================================================================
+  lint:
+    name: "Lint & Format Check"
     runs-on: ubuntu-latest
 
     steps:
       # -----------------------------------------------------------------------
-      # Step 1 — Check out the repository at the commit that triggered the run.
+      # 1a. Check out the repository.
       # -----------------------------------------------------------------------
       - name: Checkout code
         uses: actions/checkout@v4
 
       # -----------------------------------------------------------------------
-      # Step 2 — Install the exact Python version used in development.
+      # 1b. Set up the project Python version.
       # -----------------------------------------------------------------------
-      - name: Set up Python 3.12
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       # -----------------------------------------------------------------------
-      # Step 3 — Cache the pip download cache so repeated runs are faster.
-      #           The cache key includes the OS and a hash of requirements.txt,
-      #           so the cache is automatically invalidated when dependencies
-      #           change.
+      # 1c. Cache pip downloads.
+      #     Key: OS + Python version + hash of requirements.txt.
+      #     The cache is automatically invalidated when any dependency changes.
       # -----------------------------------------------------------------------
-      - name: Cache pip dependencies
+      - name: Cache pip downloads
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          key: ${{ runner.os }}-py${{ env.PYTHON_VERSION }}-pip-${{ hashFiles('requirements.txt') }}
           restore-keys: |
-            ${{ runner.os }}-pip-
+            ${{ runner.os }}-py${{ env.PYTHON_VERSION }}-pip-
 
       # -----------------------------------------------------------------------
-      # Step 4 — Install all project dependencies.
-      #           --no-cache-dir avoids a second layer of disk caching since
-      #           actions/cache already handles that above.
+      # 1d. Install only the quality tools (fast, no heavy ML deps).
       # -----------------------------------------------------------------------
-      - name: Install dependencies
-        run: pip install --no-cache-dir -r requirements.txt
+      - name: Install quality tools
+        run: pip install --no-cache-dir black ruff
 
       # -----------------------------------------------------------------------
-      # Step 5 — Black: enforce consistent code formatting.
-      #           --check exits with a non-zero code (failing the step) if any
-      #           file would be reformatted, without actually modifying files.
-      #           --diff shows exactly what Black would change.
+      # 1e. Black — check formatting without modifying files.
+      #     --diff shows exactly what would change, making failures easy to fix.
       # -----------------------------------------------------------------------
       - name: Check formatting with Black
         run: black . --check --diff
 
       # -----------------------------------------------------------------------
-      # Step 6 — Ruff: fast linter that catches errors, unused imports,
-      #           unsorted imports, and style violations.
+      # 1f. Ruff — lint for errors, unused imports, style violations, etc.
+      #     Rule sets and ignores are configured in pyproject.toml.
       # -----------------------------------------------------------------------
       - name: Lint with Ruff
         run: ruff check .
 
+  # ===========================================================================
+  # JOB 2 — test
+  # Runs the full pytest suite.
+  # Only starts after `lint` succeeds (needs: lint) to avoid burning
+  # runner minutes on test runs when formatting is already broken.
+  # ===========================================================================
+  test:
+    name: "Unit Tests (pytest)"
+    runs-on: ubuntu-latest
+    needs: lint  # waits for lint to pass before starting
+
+    steps:
       # -----------------------------------------------------------------------
-      # Step 7 — pytest: run the full unit test suite.
-      #           -v        verbose output (shows each test name).
-      #           --tb=short concise tracebacks on failure.
-      #           Unit tests that require real model artifacts are skipped
-      #           automatically via @pytest.mark.skipif, so CI never fails
-      #           because training hasn't been run.
+      # 2a. Check out the repository.
+      # -----------------------------------------------------------------------
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # -----------------------------------------------------------------------
+      # 2b. Set up Python.
+      # -----------------------------------------------------------------------
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      # -----------------------------------------------------------------------
+      # 2c. Cache pip downloads (same cache key as lint job — shared cache).
+      # -----------------------------------------------------------------------
+      - name: Cache pip downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-py${{ env.PYTHON_VERSION }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-py${{ env.PYTHON_VERSION }}-pip-
+
+      # -----------------------------------------------------------------------
+      # 2d. Install all project dependencies (including ML libs for tests).
+      # -----------------------------------------------------------------------
+      - name: Install dependencies
+        run: pip install --no-cache-dir -r requirements.txt
+
+      # -----------------------------------------------------------------------
+      # 2e. Run pytest.
+      #     --tb=short       — concise tracebacks on failure.
+      #     --junitxml       — produce a JUnit XML report consumed in step 2f.
+      #     Live model tests (@pytest.mark.skipif) are skipped automatically
+      #     because training artifacts are not present in CI.
       # -----------------------------------------------------------------------
       - name: Run tests with pytest
-        run: pytest tests/ -v --tb=short
+        run: |
+          pytest tests/ -v --tb=short \
+            --junitxml=reports/pytest-results.xml
+
+      # -----------------------------------------------------------------------
+      # 2f. Upload test report as a workflow artifact.
+      #     Visible in the GitHub Actions run summary under "Artifacts".
+      #     Useful for debugging failures without re-running locally.
+      #     `if: always()` ensures the report is uploaded even when tests fail.
+      # -----------------------------------------------------------------------
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-results
+          path: reports/pytest-results.xml
+          retention-days: 14  # keep for 2 weeks, then auto-delete
+
+  # ===========================================================================
+  # FUTURE PHASE PLACEHOLDER — Docker Build & CD
+  #
+  # Uncomment and fill in when ready for deployment.
+  #
+  # docker-build:
+  #   name: "Build & Push Docker Image"
+  #   runs-on: ubuntu-latest
+  #   needs: test
+  #   steps:
+  #     - name: Checkout code
+  #       uses: actions/checkout@v4
+  #     # ... docker/build-push-action steps here
+  #
+  # deploy-staging:
+  #   name: "Deploy to Staging"
+  #   runs-on: ubuntu-latest
+  #   needs: docker-build
+  #   environment: staging
+  #   steps:
+  #     # ... deployment steps here
+  # ===========================================================================

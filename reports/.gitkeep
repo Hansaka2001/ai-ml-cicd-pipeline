@@ -1,0 +1,6 @@
+# This directory receives pytest's JUnit XML report generated during CI.
+# The report file (pytest-results.xml) is uploaded as a GitHub Actions
+# artifact and retained for 14 days for debugging failed test runs.
+#
+# The directory is committed so pytest --junitxml can write into it
+# without the path needing to be created at runtime.
