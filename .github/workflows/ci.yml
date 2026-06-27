@@ -306,14 +306,35 @@ jobs:
     environment: production
 
     steps:
+      # -----------------------------------------------------------------------
+      # Single step handles both cases:
+      #   - Secret is set   → POST to Render deploy hook and check response.
+      #   - Secret not set  → print instructions and exit 0 (no failure).
+      #
+      # NOTE: Secrets cannot be referenced in `if:` conditions (GitHub Actions
+      # limitation). The check is done inside the bash script via an env var.
+      # -----------------------------------------------------------------------
       - name: Trigger Render deploy hook
-        # Skip gracefully if the secret is not configured yet.
-        # Remove this `if` once the secret is set up.
-        if: ${{ secrets.RENDER_DEPLOY_HOOK_URL != '' }}
+        env:
+          # Expose the secret as an environment variable so the shell script
+          # can read it. This is the only safe way to access secrets in steps.
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
         run: |
+          if [ -z "$RENDER_DEPLOY_HOOK_URL" ]; then
+            echo "⚠️  RENDER_DEPLOY_HOOK_URL secret is not configured."
+            echo "    To enable deployment:"
+            echo "      1. Go to your Render service → Settings → Deploy Hooks"
+            echo "      2. Copy the URL"
+            echo "      3. Add it as a GitHub secret:"
+            echo "         Repo → Settings → Secrets → Actions → New secret"
+            echo "         Name: RENDER_DEPLOY_HOOK_URL"
+            echo "    Skipping deployment for now."
+            exit 0
+          fi
+
           echo "Triggering deployment on Render..."
           HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            -X POST "${{ secrets.RENDER_DEPLOY_HOOK_URL }}")
+            -X POST "$RENDER_DEPLOY_HOOK_URL")
 
           if [ "$HTTP_STATUS" = "200" ] || [ "$HTTP_STATUS" = "201" ]; then
             echo "✅ Deployment triggered successfully (HTTP $HTTP_STATUS)"
@@ -321,10 +342,3 @@ jobs:
             echo "❌ Deploy hook returned HTTP $HTTP_STATUS"
             exit 1
           fi
-
-      - name: Deployment skipped (secret not configured)
-        if: ${{ secrets.RENDER_DEPLOY_HOOK_URL == '' }}
-        run: |
-          echo "⚠️  RENDER_DEPLOY_HOOK_URL secret is not set."
-          echo "    Add it in: Settings → Secrets → Actions → New repository secret"
-          echo "    Deployment step skipped."
