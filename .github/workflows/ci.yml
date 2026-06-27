@@ -1,0 +1,99 @@
+# =============================================================================
+# ci.yml
+# GitHub Actions — Continuous Integration Pipeline
+#
+# Runs on every push and pull request to the `main` branch.
+#
+# Pipeline steps:
+#   1. Checkout source code
+#   2. Set up Python 3.12
+#   3. Cache pip dependencies (speeds up subsequent runs)
+#   4. Install all dependencies from requirements.txt
+#   5. Black  — check code formatting
+#   6. Ruff   — lint for errors and style violations
+#   7. pytest — run the full unit test suite
+# =============================================================================
+
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # quality-and-tests
+  # A single job that runs all checks sequentially.
+  # Each step must pass before the next one starts.
+  # ---------------------------------------------------------------------------
+  quality-and-tests:
+    name: Code Quality & Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      # -----------------------------------------------------------------------
+      # Step 1 — Check out the repository at the commit that triggered the run.
+      # -----------------------------------------------------------------------
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # -----------------------------------------------------------------------
+      # Step 2 — Install the exact Python version used in development.
+      # -----------------------------------------------------------------------
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # -----------------------------------------------------------------------
+      # Step 3 — Cache the pip download cache so repeated runs are faster.
+      #           The cache key includes the OS and a hash of requirements.txt,
+      #           so the cache is automatically invalidated when dependencies
+      #           change.
+      # -----------------------------------------------------------------------
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      # -----------------------------------------------------------------------
+      # Step 4 — Install all project dependencies.
+      #           --no-cache-dir avoids a second layer of disk caching since
+      #           actions/cache already handles that above.
+      # -----------------------------------------------------------------------
+      - name: Install dependencies
+        run: pip install --no-cache-dir -r requirements.txt
+
+      # -----------------------------------------------------------------------
+      # Step 5 — Black: enforce consistent code formatting.
+      #           --check exits with a non-zero code (failing the step) if any
+      #           file would be reformatted, without actually modifying files.
+      #           --diff shows exactly what Black would change.
+      # -----------------------------------------------------------------------
+      - name: Check formatting with Black
+        run: black . --check --diff
+
+      # -----------------------------------------------------------------------
+      # Step 6 — Ruff: fast linter that catches errors, unused imports,
+      #           unsorted imports, and style violations.
+      # -----------------------------------------------------------------------
+      - name: Lint with Ruff
+        run: ruff check .
+
+      # -----------------------------------------------------------------------
+      # Step 7 — pytest: run the full unit test suite.
+      #           -v        verbose output (shows each test name).
+      #           --tb=short concise tracebacks on failure.
+      #           Unit tests that require real model artifacts are skipped
+      #           automatically via @pytest.mark.skipif, so CI never fails
+      #           because training hasn't been run.
+      # -----------------------------------------------------------------------
+      - name: Run tests with pytest
+        run: pytest tests/ -v --tb=short
