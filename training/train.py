@@ -14,9 +14,8 @@ Usage:
     python training/train.py
 """
 
-import os
-import time
 import logging
+import time
 from pathlib import Path
 
 import joblib
@@ -42,18 +41,18 @@ MODEL_PATH = MODEL_DIR / "logistic_regression.joblib"
 # TF-IDF hyper-parameters
 TFIDF_PARAMS: dict = {
     "max_features": 50_000,
-    "ngram_range": (1, 2),      # unigrams + bigrams
-    "sublinear_tf": True,       # apply log(1 + tf) scaling
-    "min_df": 3,                # ignore very rare terms
+    "ngram_range": (1, 2),  # unigrams + bigrams
+    "sublinear_tf": True,  # apply log(1 + tf) scaling
+    "min_df": 3,  # ignore very rare terms
     "strip_accents": "unicode",
     "analyzer": "word",
 }
 
 # Logistic Regression hyper-parameters
 LR_PARAMS: dict = {
-    "C": 5.0,                   # inverse regularisation strength
+    "C": 5.0,  # inverse regularisation strength
     "max_iter": 1_000,
-    "solver": "lbfgs",          # lbfgs is single-threaded; n_jobs removed in sk-learn ≥1.8
+    "solver": "lbfgs",  # lbfgs is single-threaded; n_jobs removed in sk-learn ≥1.8
     "random_state": 42,
 }
 

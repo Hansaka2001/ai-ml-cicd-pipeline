@@ -1,5 +1,80 @@
+# ===========================================================================
+# pyproject.toml
+# Project-wide tool configuration for pytest, Black, and Ruff.
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# pytest
+# ---------------------------------------------------------------------------
 [tool.pytest.ini_options]
 # Ensure the project root is always on sys.path so `app` and `training`
 # packages resolve correctly when running pytest from any working directory.
 pythonpath = ["."]
-testpaths = ["tests"]
+testpaths  = ["tests"]
+
+# Custom markers — avoids PytestUnknownMarkWarning.
+markers = [
+    "live: tests that require real trained model artifacts on disk",
+]
+
+# Show extra test summary info: failures (f), errors (e), skips (s).
+addopts = "-v --tb=short -ra"
+
+
+# ---------------------------------------------------------------------------
+# Black — code formatter
+# ---------------------------------------------------------------------------
+[tool.black]
+line-length    = 100
+target-version = ["py312"]
+# Directories to exclude from formatting.
+exclude = '''
+/(
+    \.git
+  | \.venv
+  | __pycache__
+  | training/model
+)/
+'''
+
+
+# ---------------------------------------------------------------------------
+# Ruff — fast Python linter
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length    = 100
+target-version = "py312"
+
+# Directories Ruff should ignore entirely.
+exclude = [
+    ".git",
+    ".venv",
+    "__pycache__",
+    "training/model",
+]
+
+[tool.ruff.lint]
+# Rule sets to enable:
+#   E / W  — pycodestyle errors and warnings
+#   F      — Pyflakes (undefined names, unused imports, etc.)
+#   I      — isort (import ordering)
+#   UP     — pyupgrade (modernise syntax for target Python version)
+#   B      — flake8-bugbear (common bug patterns)
+#   C4     — flake8-comprehensions (unnecessary comprehensions)
+#   SIM    — flake8-simplify (simplifiable code)
+select = ["E", "W", "F", "I", "UP", "B", "C4", "SIM"]
+
+# Rules intentionally ignored:
+#   E501   — line-too-long (Black handles line length)
+#   B008   — do-not-perform-function-calls-in-default-arguments
+#             (FastAPI uses Depends() as default arg — false positive)
+#   SIM108 — use-ternary-operator (readability preference)
+ignore = ["E501", "B008", "SIM108"]
+
+# Allow auto-fix for safe rules only.
+fixable = ["I", "UP", "C4", "F401"]
+
+[tool.ruff.lint.isort]
+# Ensure first-party imports (`app`, `training`) are sorted after
+# third-party imports and before stdlib.
+known-first-party = ["app", "training"]

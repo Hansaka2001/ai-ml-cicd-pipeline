@@ -11,7 +11,6 @@ Using explicit Pydantic models (rather than raw dicts) provides:
 
 from pydantic import BaseModel, Field, field_validator
 
-
 # ---------------------------------------------------------------------------
 # Request
 # ---------------------------------------------------------------------------

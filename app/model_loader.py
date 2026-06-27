@@ -10,7 +10,6 @@ prediction request, keeping latency low under production load.
 
 import logging
 from pathlib import Path
-from typing import Optional
 
 import joblib
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -31,8 +30,8 @@ _MODEL_PATH = _MODEL_DIR / "logistic_regression.joblib"
 # Module-level singletons (populated on first call to `get_model`)
 # ---------------------------------------------------------------------------
 
-_vectorizer: Optional[TfidfVectorizer] = None
-_model: Optional[LogisticRegression] = None
+_vectorizer: TfidfVectorizer | None = None
+_model: LogisticRegression | None = None
 
 
 def _load_artifacts() -> tuple[TfidfVectorizer, LogisticRegression]:
@@ -52,8 +51,7 @@ def _load_artifacts() -> tuple[TfidfVectorizer, LogisticRegression]:
         )
     if not _MODEL_PATH.exists():
         raise FileNotFoundError(
-            f"Model not found at '{_MODEL_PATH}'. "
-            "Please run `python training/train.py` first."
+            f"Model not found at '{_MODEL_PATH}'. " "Please run `python training/train.py` first."
         )
 
     log.info("Loading vectorizer from %s …", _VECTORIZER_PATH)
