@@ -216,3 +216,30 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Virtual Environment
+.venv/
+
+# Python
+__pycache__/
+*.pyc
+
+# Model Files
+*.pkl
+
+# Environment
+.env
+
+# Testing
+.pytest_cache/
+
+# Coverage
+.coverage
+htmlcov/
+
+# VS Code
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db

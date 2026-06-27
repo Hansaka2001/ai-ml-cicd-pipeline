@@ -1,0 +1,10 @@
+fastapi 
+uvicorn 
+scikit-learn 
+pandas 
+numpy 
+datasets 
+joblib 
+pytest 
+black 
+ruff
