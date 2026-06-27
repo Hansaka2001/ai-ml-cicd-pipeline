@@ -1,0 +1,9 @@
+# This directory holds the trained model artifacts:
+#   - tfidf_vectorizer.joblib
+#   - logistic_regression.joblib
+#
+# Generate them by running:
+#   python training/train.py
+#
+# Both files are committed to the repository so the Dockerfile can COPY them
+# into the Docker image at build time (see COPY training/model/ in Dockerfile).

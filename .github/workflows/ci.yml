@@ -1,29 +1,39 @@
 # =============================================================================
 # ci.yml
-# GitHub Actions — Production-Grade Multi-Stage CI Pipeline
+# GitHub Actions — Full CI/CD Pipeline
 #
 # Trigger: push or pull request to `main`.
 #
-# Job graph:
+# Job dependency graph:
 #
-#   ┌─────────┐     ┌──────┐
-#   │  lint   │     │ test │
-#   │ (Black) │     │      │
-#   │ (Ruff)  │     │pytest│
-#   └────┬────┘     └──┬───┘
-#        │             │
-#        └──── both must pass for PR merge ────┘
+#   ┌──────────┐     ┌──────────┐
+#   │   lint   │     │   test   │
+#   │ (Black)  │     │ (pytest) │
+#   │ (Ruff)   │     │          │
+#   └────┬─────┘     └────┬─────┘
+#        │                │
+#        └──── both ──────┘
+#                  │
+#                  ▼
+#          ┌───────────────┐
+#          │  docker-build │  ← builds image, runs smoke test, pushes to GHCR
+#          │               │    (push to main only; PRs skip the push step)
+#          └───────┬───────┘
+#                  │  (push to main only)
+#                  ▼
+#          ┌───────────────┐
+#          │    deploy     │  ← triggers Render deploy hook
+#          └───────────────┘
 #
-# Jobs run in PARALLEL by default.
-# The `test` job has `needs: lint` so tests only run when lint passes —
-# avoids wasting runner minutes on test runs with known formatting errors.
+# Required GitHub Secrets (Settings → Secrets → Actions):
+#   RENDER_DEPLOY_HOOK_URL — Render.com deploy hook URL for your service.
+#                            Leave unset to skip the deploy job entirely.
 #
-# Future extension points (CD phases):
-#   - Add a `docker-build` job after `test` to build and push an image.
-#   - Add a `deploy-staging` job after `docker-build`.
+# Optional GitHub Secrets (for pushing to GHCR):
+#   GITHUB_TOKEN is provided automatically by GitHub Actions — no setup needed.
 # =============================================================================
 
-name: CI
+name: CI/CD
 
 on:
   push:
@@ -33,50 +43,47 @@ on:
     branches:
       - main
 
+# Cancel any in-progress run for the same branch/PR when a new commit is pushed.
+# Avoids wasting runner minutes on stale runs.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 # ---------------------------------------------------------------------------
-# Shared defaults applied to every job step that runs a shell command.
+# Shared shell default.
 # ---------------------------------------------------------------------------
 defaults:
   run:
     shell: bash
 
 # ---------------------------------------------------------------------------
-# Environment variables available to all jobs.
-# Centralised here so they are easy to update in future phases.
+# Centralised variables — change once, applies everywhere.
 # ---------------------------------------------------------------------------
 env:
   PYTHON_VERSION: "3.12"
+  # Docker image name on GitHub Container Registry (ghcr.io).
+  # Format: ghcr.io/<github-username>/<repo-name>
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/sentiment-api
 
 jobs:
   # ===========================================================================
   # JOB 1 — lint
-  # Checks code formatting (Black) and linting rules (Ruff).
-  # Fast job: no ML dependencies needed, so only quality tools are installed.
+  # Fast job: installs only the quality tools, not the heavy ML stack.
   # ===========================================================================
   lint:
     name: "Lint & Format Check"
     runs-on: ubuntu-latest
 
     steps:
-      # -----------------------------------------------------------------------
-      # 1a. Check out the repository.
-      # -----------------------------------------------------------------------
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # -----------------------------------------------------------------------
-      # 1b. Set up the project Python version.
-      # -----------------------------------------------------------------------
       - name: Set up Python ${{ env.PYTHON_VERSION }}
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      # -----------------------------------------------------------------------
-      # 1c. Cache pip downloads.
-      #     Key: OS + Python version + hash of requirements.txt.
-      #     The cache is automatically invalidated when any dependency changes.
-      # -----------------------------------------------------------------------
+      # Cache is shared with the test job via the same key.
       - name: Cache pip downloads
         uses: actions/cache@v4
         with:
@@ -85,55 +92,37 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-py${{ env.PYTHON_VERSION }}-pip-
 
-      # -----------------------------------------------------------------------
-      # 1d. Install only the quality tools (fast, no heavy ML deps).
-      # -----------------------------------------------------------------------
+      # Install only quality tools — fast, no ML deps.
       - name: Install quality tools
         run: pip install --no-cache-dir black ruff
 
-      # -----------------------------------------------------------------------
-      # 1e. Black — check formatting without modifying files.
-      #     --diff shows exactly what would change, making failures easy to fix.
-      # -----------------------------------------------------------------------
+      # --check exits non-zero if any file needs reformatting.
+      # --diff shows what Black would change, making the failure easy to fix.
       - name: Check formatting with Black
         run: black . --check --diff
 
-      # -----------------------------------------------------------------------
-      # 1f. Ruff — lint for errors, unused imports, style violations, etc.
-      #     Rule sets and ignores are configured in pyproject.toml.
-      # -----------------------------------------------------------------------
+      # Rule sets and ignores are configured in pyproject.toml.
       - name: Lint with Ruff
         run: ruff check .
 
   # ===========================================================================
   # JOB 2 — test
-  # Runs the full pytest suite.
-  # Only starts after `lint` succeeds (needs: lint) to avoid burning
-  # runner minutes on test runs when formatting is already broken.
+  # Full pytest suite. Starts only after lint passes.
   # ===========================================================================
   test:
     name: "Unit Tests (pytest)"
     runs-on: ubuntu-latest
-    needs: lint  # waits for lint to pass before starting
+    needs: lint
 
     steps:
-      # -----------------------------------------------------------------------
-      # 2a. Check out the repository.
-      # -----------------------------------------------------------------------
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # -----------------------------------------------------------------------
-      # 2b. Set up Python.
-      # -----------------------------------------------------------------------
       - name: Set up Python ${{ env.PYTHON_VERSION }}
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      # -----------------------------------------------------------------------
-      # 2c. Cache pip downloads (same cache key as lint job — shared cache).
-      # -----------------------------------------------------------------------
       - name: Cache pip downloads
         uses: actions/cache@v4
         with:
@@ -142,57 +131,200 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-py${{ env.PYTHON_VERSION }}-pip-
 
-      # -----------------------------------------------------------------------
-      # 2d. Install all project dependencies (including ML libs for tests).
-      # -----------------------------------------------------------------------
       - name: Install dependencies
         run: pip install --no-cache-dir -r requirements.txt
 
-      # -----------------------------------------------------------------------
-      # 2e. Run pytest.
-      #     --tb=short       — concise tracebacks on failure.
-      #     --junitxml       — produce a JUnit XML report consumed in step 2f.
-      #     Live model tests (@pytest.mark.skipif) are skipped automatically
-      #     because training artifacts are not present in CI.
-      # -----------------------------------------------------------------------
+      # --junitxml produces a machine-readable report consumed in the next step.
+      # Live model tests are auto-skipped (model artifacts not present in CI).
       - name: Run tests with pytest
         run: |
           pytest tests/ -v --tb=short \
             --junitxml=reports/pytest-results.xml
 
-      # -----------------------------------------------------------------------
-      # 2f. Upload test report as a workflow artifact.
-      #     Visible in the GitHub Actions run summary under "Artifacts".
-      #     Useful for debugging failures without re-running locally.
-      #     `if: always()` ensures the report is uploaded even when tests fail.
-      # -----------------------------------------------------------------------
+      # Upload report even if tests fail so the failure is always diagnosable.
       - name: Upload test report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: pytest-results
           path: reports/pytest-results.xml
-          retention-days: 14  # keep for 2 weeks, then auto-delete
+          retention-days: 14
 
   # ===========================================================================
-  # FUTURE PHASE PLACEHOLDER — Docker Build & CD
-  #
-  # Uncomment and fill in when ready for deployment.
-  #
-  # docker-build:
-  #   name: "Build & Push Docker Image"
-  #   runs-on: ubuntu-latest
-  #   needs: test
-  #   steps:
-  #     - name: Checkout code
-  #       uses: actions/checkout@v4
-  #     # ... docker/build-push-action steps here
-  #
-  # deploy-staging:
-  #   name: "Deploy to Staging"
-  #   runs-on: ubuntu-latest
-  #   needs: docker-build
-  #   environment: staging
-  #   steps:
-  #     # ... deployment steps here
+  # JOB 3 — docker-build
+  # Builds the Docker image and runs a smoke test against the running container.
+  # On pushes to main, the image is tagged and pushed to GitHub Container
+  # Registry (GHCR). Pull-request runs build-and-test only (no push).
   # ===========================================================================
+  docker-build:
+    name: "Docker Build & Smoke Test"
+    runs-on: ubuntu-latest
+    needs: [lint, test]  # only build when both quality gates pass
+
+    # Permissions required to push to GHCR.
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # -----------------------------------------------------------------------
+      # Docker build cache via GitHub Actions cache backend.
+      # Dramatically reduces rebuild times when only app code changes.
+      # -----------------------------------------------------------------------
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # -----------------------------------------------------------------------
+      # Log in to GitHub Container Registry.
+      # GITHUB_TOKEN is provided automatically — no secret configuration needed.
+      # Login is skipped on pull requests (we don't push images from PRs).
+      # -----------------------------------------------------------------------
+      - name: Log in to GitHub Container Registry
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # -----------------------------------------------------------------------
+      # Generate Docker image tags:
+      #   - `latest`  on every push to main
+      #   - `sha-<short-commit-hash>`  for precise rollback targeting
+      # -----------------------------------------------------------------------
+      - name: Extract Docker metadata (tags & labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=sha,prefix=sha-,format=short
+
+      # -----------------------------------------------------------------------
+      # Build the Docker image.
+      # NOTE: The model artifacts (training/model/*.joblib) must be committed
+      # to the repository for the COPY step in the Dockerfile to succeed.
+      # If the model directory is empty, the API starts but returns HTTP 503
+      # on POST /predict — the smoke test below only checks GET /.
+      # -----------------------------------------------------------------------
+      - name: Build Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false          # load locally for smoke test first
+          load: true
+          tags: sentiment-api:ci
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # -----------------------------------------------------------------------
+      # Smoke test: start the container and verify GET / returns HTTP 200.
+      # Steps:
+      #   1. Start container in the background (detached).
+      #   2. Wait up to 30 s for it to become ready.
+      #   3. Hit GET / and assert status 200.
+      #   4. Tear down the container.
+      # -----------------------------------------------------------------------
+      - name: Smoke test — container health check
+        run: |
+          echo "Starting container..."
+          docker run -d --name sentiment-test -p 8000:8000 sentiment-api:ci
+
+          echo "Waiting for API to become ready..."
+          for i in $(seq 1 30); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/ || echo "000")
+            if [ "$STATUS" = "200" ]; then
+              echo "✅ API is up (attempt $i) — status $STATUS"
+              break
+            fi
+            echo "  Attempt $i — got $STATUS, retrying in 1s..."
+            sleep 1
+            if [ "$i" = "30" ]; then
+              echo "❌ API did not become ready in 30 seconds"
+              docker logs sentiment-test
+              docker rm -f sentiment-test
+              exit 1
+            fi
+          done
+
+          echo "Testing GET / endpoint..."
+          RESPONSE=$(curl -s http://localhost:8000/)
+          echo "Response: $RESPONSE"
+
+          # Validate response contains the expected keys.
+          echo "$RESPONSE" | python3 -c "
+          import json, sys
+          body = json.load(sys.stdin)
+          assert 'message' in body, 'Missing key: message'
+          assert 'version' in body, 'Missing key: version'
+          assert 'docs_url' in body, 'Missing key: docs_url'
+          print('✅ Response schema is valid.')
+          "
+
+          docker rm -f sentiment-test
+
+      # -----------------------------------------------------------------------
+      # Push to GHCR — only on direct pushes to main (not on PRs).
+      # This creates the `latest` and `sha-*` tags used by the deploy job.
+      # -----------------------------------------------------------------------
+      - name: Push image to GitHub Container Registry
+        if: github.event_name == 'push'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ===========================================================================
+  # JOB 4 — deploy
+  # Triggers a Render.com deployment after a successful Docker push.
+  # Only runs on pushes to main (not on pull requests).
+  #
+  # Setup:
+  #   1. Go to your Render service → Settings → Deploy Hooks.
+  #   2. Copy the deploy hook URL.
+  #   3. Add it as a GitHub secret: Settings → Secrets → Actions →
+  #      New repository secret → Name: RENDER_DEPLOY_HOOK_URL
+  #   4. On Railway or other platforms, replace the curl step with their CLI.
+  # ===========================================================================
+  deploy:
+    name: "Deploy to Render"
+    runs-on: ubuntu-latest
+    needs: docker-build
+    # Only deploy on real pushes to main — never on pull requests.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # `environment: production` enables manual approval gates and shows
+    # the deployment in the GitHub Environments dashboard.
+    environment: production
+
+    steps:
+      - name: Trigger Render deploy hook
+        # Skip gracefully if the secret is not configured yet.
+        # Remove this `if` once the secret is set up.
+        if: ${{ secrets.RENDER_DEPLOY_HOOK_URL != '' }}
+        run: |
+          echo "Triggering deployment on Render..."
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST "${{ secrets.RENDER_DEPLOY_HOOK_URL }}")
+
+          if [ "$HTTP_STATUS" = "200" ] || [ "$HTTP_STATUS" = "201" ]; then
+            echo "✅ Deployment triggered successfully (HTTP $HTTP_STATUS)"
+          else
+            echo "❌ Deploy hook returned HTTP $HTTP_STATUS"
+            exit 1
+          fi
+
+      - name: Deployment skipped (secret not configured)
+        if: ${{ secrets.RENDER_DEPLOY_HOOK_URL == '' }}
+        run: |
+          echo "⚠️  RENDER_DEPLOY_HOOK_URL secret is not set."
+          echo "    Add it in: Settings → Secrets → Actions → New repository secret"
+          echo "    Deployment step skipped."

@@ -1,0 +1,60 @@
+# =============================================================================
+# .dockerignore
+# Files and directories excluded from the Docker build context.
+#
+# A well-crafted .dockerignore:
+#   - Reduces the build context size (faster `docker build`).
+#   - Prevents secrets and dev artifacts leaking into the image.
+#   - Ensures the cache layer for `COPY requirements-app.txt .` is stable.
+# =============================================================================
+
+# Version control
+.git
+.gitignore
+
+# GitHub Actions — not needed inside the container
+.github
+
+# Python virtual environment — Docker installs its own
+.venv
+env/
+venv/
+
+# Python byte-code caches
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Linter / formatter caches
+.ruff_cache
+.pytest_cache
+
+# Test suite — not deployed to production
+tests/
+
+# CI reports
+reports/
+
+# Training source and dataset cache — the container only needs the saved model.
+# training/train.py is excluded; training/model/ is INCLUDED (see below).
+training/train.py
+training/__init__.py
+data/
+
+# Development requirements — container uses requirements-app.txt
+requirements.txt
+
+# Documentation and config files not needed at runtime
+README.md
+pyproject.toml
+
+# OS artefacts
+.DS_Store
+Thumbs.db
+Thumbs.db:encryptable
+
+# IDE settings
+.vscode/
+.idea/

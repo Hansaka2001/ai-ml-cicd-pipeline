@@ -1,0 +1,22 @@
+# =============================================================================
+# requirements-app.txt
+# Runtime-only dependencies for the FastAPI application inside Docker.
+#
+# Excludes development/test tools (pytest, black, ruff, datasets) that are
+# only needed on the developer machine or in CI, not in the deployed container.
+# This keeps the Docker image lean and the container startup fast.
+# =============================================================================
+
+# Core API framework
+fastapi>=0.111.0
+uvicorn[standard]>=0.30.0
+
+# Machine learning (inference only — no training libs like `datasets`)
+scikit-learn>=1.4.0
+joblib>=1.4.0
+
+# Numerics
+numpy>=1.26.0
+
+# Data validation
+pydantic>=2.7.0
