@@ -1,0 +1,5 @@
+[tool.pytest.ini_options]
+# Ensure the project root is always on sys.path so `app` and `training`
+# packages resolve correctly when running pytest from any working directory.
+pythonpath = ["."]
+testpaths = ["tests"]
